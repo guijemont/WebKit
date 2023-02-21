@@ -276,6 +276,39 @@ private:
 };
 
 
+class Timers {
+    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_NONCOPYABLE(Timers);
+
+public:
+    class TimerData : public RefCounted<TimerData> {
+        public:
+            ~TimerData() {};
+            static Ref<TimerData> create(Ref<RunLoop::DispatchTimer>&& timer, DeferredWorkTimer::Ticket ticket) {
+                return adoptRef(*new TimerData(WTFMove(timer), ticket));
+            }
+            Ref<RunLoop::DispatchTimer>& timer() { return m_timer; }
+            DeferredWorkTimer::Ticket ticket() { return m_ticket; }
+        private:
+            TimerData(Ref<RunLoop::DispatchTimer>&& timer, DeferredWorkTimer::Ticket ticket) :
+                m_timer(WTFMove(timer)), m_ticket(ticket) {};
+            Ref<RunLoop::DispatchTimer> m_timer;
+            DeferredWorkTimer::Ticket m_ticket;
+    };
+
+    Timers();
+    ~Timers();
+    static Timers& singleton();
+    int add(Ref<TimerData>&&);
+    Ref<TimerData> get(int);
+    Ref<TimerData> take(int);
+    void remove(int);
+private:
+    int circularSequentialID();
+    int m_circularSequentialID { 0 };
+    HashMap<int, Ref<TimerData>> m_timers;
+};
+
 static JSC_DECLARE_HOST_FUNCTION(functionAtob);
 static JSC_DECLARE_HOST_FUNCTION(functionBtoa);
 
@@ -341,6 +374,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionHasCustomProperties);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpTypesForAllVariables);
 static JSC_DECLARE_HOST_FUNCTION(functionDrainMicrotasks);
 static JSC_DECLARE_HOST_FUNCTION(functionSetTimeout);
+static JSC_DECLARE_HOST_FUNCTION(functionClearTimeout);
 static JSC_DECLARE_HOST_FUNCTION(functionReleaseWeakRefs);
 static JSC_DECLARE_HOST_FUNCTION(functionFinalizationRegistryLiveCount);
 static JSC_DECLARE_HOST_FUNCTION(functionFinalizationRegistryDeadCount);
@@ -615,6 +649,7 @@ private:
 
         addFunction(vm, "drainMicrotasks"_s, functionDrainMicrotasks, 0);
         addFunction(vm, "setTimeout"_s, functionSetTimeout, 2);
+        addFunction(vm, "clearTimeout"_s, functionClearTimeout, 1);
 
         addFunction(vm, "releaseWeakRefs"_s, functionReleaseWeakRefs, 0);
         addFunction(vm, "finalizationRegistryLiveCount"_s, functionFinalizationRegistryLiveCount, 0);
@@ -2189,6 +2224,58 @@ Workers& Workers::singleton()
     return *result;
 }
 
+
+
+Timers::Timers()
+{
+}
+
+Timers::~Timers()
+{
+    UNREACHABLE_FOR_PLATFORM();
+}
+
+
+Timers& Timers::singleton()
+{
+    static Timers* result;
+    static std::once_flag flag;
+    std::call_once(
+        flag,
+        [] {
+            result = new Timers();
+        });
+    return *result;
+}
+
+int Timers::circularSequentialID()
+{
+    ++m_circularSequentialID;
+    if (m_circularSequentialID <= 0)
+        m_circularSequentialID = 1;
+    return m_circularSequentialID;
+}
+
+int Timers::add(Ref<Timers::TimerData>&& timer) {
+    int id = circularSequentialID();
+    dataLogLn(id, ":\t", RawPointer(timer.ptr()));
+    m_timers.add(id, WTFMove(timer));
+    return id;
+}
+
+Ref<Timers::TimerData> Timers::get(int id) {
+    return *m_timers.get(id);
+}
+
+Ref<Timers::TimerData> Timers::take(int id) {
+    return *m_timers.take(id);
+}
+
+
+void Timers::remove(int id) {
+    m_timers.remove(id);
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionDollarCreateRealm, (JSGlobalObject* globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
@@ -2705,9 +2792,30 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout, (JSGlobalObject* globalObject, Call
     // it will cause setTimeout starvation problem (see stress test settimeout-starvation.js).
     JSValue timeout = callFrame->argument(1);
     Seconds delay = timeout.isNumber() ? Seconds::fromMilliseconds(timeout.asNumber()) : Seconds(0);
-    RunLoop::current().dispatchAfter(delay, WTFMove(dispatch));
+    Ref<RunLoop::DispatchTimer> timer = RunLoop::current().dispatchAfter(delay, WTFMove(dispatch));
+    Ref<Timers::TimerData> timer_data = Timers::TimerData::create(WTFMove(timer), ticket);
+    int id = Timers::singleton().add(WTFMove(timer_data));
 
     dataLogLn("functionSetTimeout() end");
+
+    return JSValue::encode(jsNumber(id));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionClearTimeout, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (callFrame->argumentCount() >= 1) {
+        int timerId = callFrame->argument(0).toNumber(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        Ref<Timers::TimerData> timer_data = Timers::singleton().take(timerId);
+        timer_data->timer()->stop();
+        vm.deferredWorkTimer->cancelPendingWork(timer_data->ticket());
+        // We need to schedule a dummy task to make sure that
+        // DeferredWorkTimer::doWork() gets called and properly terminates them
+        // main loop.
+        vm.deferredWorkTimer->scheduleWorkSoon(timer_data->ticket(), [](auto) {});
+    }
 
     return JSValue::encode(jsUndefined());
 }
