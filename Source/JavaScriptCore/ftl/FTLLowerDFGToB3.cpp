@@ -13432,6 +13432,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 GPRReg stubInfoGPR = InvalidGPRReg;
                 GPRReg scratchGPR = InvalidGPRReg;
+                UNUSED_VARIABLE(scratchGPR);
                 if (Options::useDataICInFTL()) {
                     stubInfoGPR = params.gpScratch(0);
                     if constexpr (type == AccessType::InById)

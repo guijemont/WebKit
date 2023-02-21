@@ -192,7 +192,7 @@ char* newTypedArrayWithSize(JSGlobalObject* globalObject, VM& vm, Structure* str
         return nullptr;
     }
 
-    static_assert(std::numeric_limits<intptr_t>::max() <= std::numeric_limits<size_t>::max());
+    static_assert(static_cast<uint64_t>(std::numeric_limits<intptr_t>::max()) <= std::numeric_limits<size_t>::max());
     size_t unsignedSize = static_cast<size_t>(size);
 
     if (vector)
