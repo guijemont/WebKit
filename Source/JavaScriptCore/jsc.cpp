@@ -2681,6 +2681,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks, (JSGlobalObject* globalObject,
 
 JSC_DEFINE_HOST_FUNCTION(functionSetTimeout, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    dataLogLn("functionSetTimeout()");
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -2691,7 +2692,9 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout, (JSGlobalObject* globalObject, Call
 
     auto ticket = vm.deferredWorkTimer->addPendingWork(vm, callback, { });
     auto dispatch = [callback, ticket] {
+        dataLogLn("dispatch()");
         callback->vm().deferredWorkTimer->scheduleWorkSoon(ticket, [callback](DeferredWorkTimer::Ticket) {
+            dataLogLn("scheduled task");
             JSGlobalObject* globalObject = callback->globalObject();
             MarkedArgumentBuffer args;
             call(globalObject, callback, jsUndefined(), args, "You shouldn't see this..."_s);
@@ -2703,6 +2706,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout, (JSGlobalObject* globalObject, Call
     JSValue timeout = callFrame->argument(1);
     Seconds delay = timeout.isNumber() ? Seconds::fromMilliseconds(timeout.asNumber()) : Seconds(0);
     RunLoop::current().dispatchAfter(delay, WTFMove(dispatch));
+
+    dataLogLn("functionSetTimeout() end");
 
     return JSValue::encode(jsUndefined());
 }
