@@ -2803,10 +2803,12 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout, (JSGlobalObject* globalObject, Call
 
 JSC_DEFINE_HOST_FUNCTION(functionClearTimeout, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    dataLogLn("functionClearTimeout()");
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (callFrame->argumentCount() >= 1) {
         int timerId = callFrame->argument(0).toNumber(globalObject);
+        dataLogLn("functionClearTimeout(): arg=", timerId);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
         Ref<Timers::TimerData> timer_data = Timers::singleton().take(timerId);
         timer_data->timer()->stop();
@@ -2814,9 +2816,12 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout, (JSGlobalObject* globalObject, Ca
         // We need to schedule a dummy task to make sure that
         // DeferredWorkTimer::doWork() gets called and properly terminates them
         // main loop.
-        vm.deferredWorkTimer->scheduleWorkSoon(timer_data->ticket(), [](auto) {});
+        vm.deferredWorkTimer->scheduleWorkSoon(timer_data->ticket(), [](auto) {
+                dataLogLn("Dummy task");
+                });
     }
 
+    dataLogLn("functionClearTimeout() end");
     return JSValue::encode(jsUndefined());
 }
 
@@ -3968,7 +3973,9 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
         func(vm, globalObject, success);
         vm.drainMicrotasks();
     }
+    dataLogLn("before runRunLoop()");
     vm.deferredWorkTimer->runRunLoop();
+    dataLogLn("after runRunLoop()");
     {
         JSLockHolder locker(vm);
         if (options.m_interactive && success)
